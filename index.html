@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>信用卡回饋</title>
+	<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+</head>
+
+<body>
+	<section id="app" class="section">
+		<div class="container">
+			<div class="columns">
+				<div class="column">
+					<div class="field">
+						<label class="label">價格 ($)</label>
+						<div class="control">
+							<input v-for="(price, index) in prices" v-model="price.value" class="input" :key="price.index" type="number" min="1" step="1">
+						</div>
+					</div>
+					<div class="field">
+						<div class="control">
+							<button class="button is-link" @click="addPrice">+</button>
+						</div>
+					</div>
+				</div>
+				<div class="column">
+					<div class="field">
+						<label class="label">信用卡回饋 (%)</label>
+						<div class="control">
+							<input v-for="reward in rewards" :key="reward.index" v-model="reward.value" class="input" type="number" min="0" step="0.1">
+						</div>
+					</div>
+					<div class="field">
+						<div class="control">
+							<button class="button is-link" @click="addReward">+</button>
+						</div>
+					</div>
+				</div>
+				<div class="column">
+					<div class="field">
+						<label class="label">交易手續費 (%)</label>
+						<div class="control">
+							<input v-model="fee" class="input" type="number" min="0" step="0.1">
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="columns">
+				<div class="column">
+					<p class="subtitle mt-5">
+						最佳結果
+					</p>
+					<div class="control">
+						在相同回饋下
+						<label class="radio">
+							<input v-model="perferSplit" type="radio" name="answer" value="1">
+							盡量分開結帳
+						</label>
+						<label class="radio">
+							<input v-model="perferSplit" type="radio" name="answer" value="0">
+							盡量合併結帳
+						</label>
+					</div>
+					<Result :result="bestResult" />
+				</div>
+				<div class="column">
+					<p class="subtitle mt-5">
+						分開結帳
+					</p>
+					<Result :result="splitResult" />
+				</div>
+				<div class="column">
+					<p class="subtitle mt-5">
+						合併結帳
+					</p>
+					<Result :result="mergeResult" />
+				</div>
+			</div>
+	</section>
+</body>
+
+<script>
+	const { createApp } = Vue
+
+	const app = createApp({
+		data() {
+			return {
+				fee: '1.5',
+				rewards: [
+					{ index: 1, value: 1 },
+				],
+				prices: [
+					{ index: 1, value: '' },
+					{ index: 2, value: '' },
+					{ index: 3, value: '' },
+					{ index: 4, value: '' },
+				],
+				perferSplit: 1,
+				allPartitions: [],
+			}
+		},
+		mounted() {
+			const params = Object.fromEntries(new URL(location.href).searchParams.entries())
+			if (params.fee && !isNaN(parseFloat(params.fee))) {
+				this.fee = parseFloat(params.fee)
+			}
+			if (params.price) {
+				params.price = decodeURIComponent(params.price)
+				this.prices = params.price.split(' ').map((price, index) => ({ index: index + 1, value: parseInt(price) }))
+			}
+			if (params.reward) {
+				params.reward = decodeURIComponent(params.reward)
+				this.rewards = params.reward.split(' ').map((reward, index) => ({ index: index + 1, value: parseFloat(reward) }))
+			}
+			if (params.split && !isNaN(parseInt(params.split))) {
+				this.perferSplit = parseInt(params.split)
+			}
+		},
+		watch: {
+			prices: {
+				handler() {
+					this.updateQuery()
+				},
+				deep: true,
+			},
+			rewards: {
+				handler() {
+					this.updateQuery()
+				},
+				deep: true,
+			},
+			fee() {
+				this.updateQuery()
+			},
+			perferSplit() {
+				this.updateQuery()
+			},
+		},
+		computed: {
+			cleanPrices() {
+				return this.prices.filter((price) => price.value > 0)
+			},
+			cleanRewards() {
+				return this.rewards.filter((reward) => reward.value > 0)
+			},
+			bestResult() {
+				this.allPartitions = []
+				this.partition([...Array(this.cleanPrices.length).keys()], 0, [])
+				let best = {
+					partition: [],
+					total: -Infinity,
+					size: 0,
+				}
+
+				for (const partitions of this.allPartitions) {
+					let current = 0
+					for (const group of partitions) {
+						let price = 0
+						for (const index of group) {
+							price += this.cleanPrices[index].value
+						}
+						current -= Math.round(price * this.fee / 100)
+						for (const reward of this.cleanRewards) {
+							current += Math.round(price * reward.value / 100)
+						}
+					}
+					if (current > best.total
+						|| (current === best.total && (
+							(this.perferSplit == 1 && partitions.length > best.size)
+							|| (this.perferSplit == 0 && partitions.length < best.size)
+						))
+					) {
+						best = {
+							partition: partitions,
+							total: current,
+							size: partitions.length,
+						}
+					}
+				}
+				return this.buildResult(best.partition)
+			},
+			splitResult() {
+				return this.buildResult(this.cleanPrices.map((price, index) => [index]))
+			},
+			mergeResult() {
+				return this.buildResult([this.cleanPrices.map((price, index) => index)])
+			},
+		},
+		methods: {
+			addPrice() {
+				this.prices.push({ index: this.prices.length + 1, value: '' })
+			},
+			addReward() {
+				this.rewards.push({ index: this.rewards.length + 1, value: '' })
+			},
+			calculate() {
+			},
+			deepcopy(obj) {
+				return JSON.parse(JSON.stringify(obj))
+			},
+			partition(set, index, ans) {
+				if (index === set.length) {
+					this.allPartitions.push(ans)
+					return
+				}
+				for (let i = 0; i < ans.length; i++) {
+					ans[i].push(set[index])
+					this.partition(set, index + 1, this.deepcopy(ans))
+					ans[i].pop()
+				}
+				ans.push([set[index]])
+				this.partition(set, index + 1, this.deepcopy(ans))
+				ans.pop()
+			},
+			buildResult(partition) {
+				let res = {
+					groups: [],
+					price: 0,
+					fee: 0,
+					reward: 0,
+				}
+				let totalPrice = 0
+				let totalReward = 0
+				for (const group of partition) {
+					let groupRes = this.calcReward(group)
+					res.groups.push(groupRes)
+					res.price += groupRes.price
+					res.fee += groupRes.fee
+					res.reward += groupRes.reward
+				}
+				return res
+			},
+			calcReward(partition) {
+				let price = 0
+				let items = partition.map((index) => {
+					price += this.cleanPrices[index].value
+					return this.cleanPrices[index].value
+				})
+				let fee = Math.round(price * this.fee / 100)
+				let totalReward = 0
+				for (const reward of this.cleanRewards) {
+					totalReward += Math.round(price * reward.value / 100)
+				}
+				return {
+					items,
+					price,
+					fee,
+					reward: totalReward,
+				}
+			},
+			updateQuery() {
+				let params = new URLSearchParams()
+				params.set('price', this.cleanPrices.map((price) => price.value).join(' '))
+				params.set('reward', this.cleanRewards.map((reward) => reward.value).join(' '))
+				params.set('fee', this.fee)
+				params.set('split', this.perferSplit)
+				history.replaceState({}, '', `${location.pathname}?${params}`)
+			},
+		},
+	})
+	app.component(
+		'Result',
+		{
+			props: ['result'],
+			template: `
+<div class="content">
+	<ul>
+		<li v-for="group in result.groups">
+			分組：<span v-for="item in group.items" class="tag is-primary is-light">\${{ item }}</span>
+			金額：<span class="tag is-primary is-light">\${{ group.price }}</span>
+			手續費：<span class="tag is-danger is-light">\${{ group.fee }}</span>
+			回饋：<span class="tag is-success is-light">\${{ group.reward }}</span>
+		</li>
+		<li>
+			手續費合計：<span class="tag is-danger is-light">\${{ result.fee }}</span>
+			回饋合計：<span class="tag is-success is-light">\${{ result.reward }}</span>
+		</li>
+		<li>
+			總金額：<span class="tag is-primary is-light">\${{ result.price }}</span>
+			回饋 - 手續費：<span class="tag is-success is-light">\${{ result.reward - result.fee }}</span>
+		</li>
+	</ul>
+</div>
+`
+		}
+	)
+	app.mount('#app')
+</script>
